@@ -13,10 +13,10 @@ from .utils.generic_utils import Progbar, printv
 from .layers import containers
 from six.moves import range
 
-def standardize_y(y):
+def standardize_y(y, mode=None):
     if not hasattr(y, 'shape'):
         y = np.asarray(y)
-    if len(y.shape) == 1:
+    if (len(y.shape) == 1) & (mode!="CL"):
         y = np.reshape(y, (len(y), 1))
     return y
 
@@ -45,7 +45,7 @@ def slice_X(X, start=None, stop=None):
 
 class Model(object):
 
-    def compile(self, optimizer, loss, class_mode="categorical", theano_mode=None):
+    def compile(self, optimizer, loss, class_mode="categorical", theano_mode=None, index=None):
 
         # 调用optimizers / objectives 里面的get函数(注意有's')
         # 目的是把optimizer和loss函数实例化,如果在外面实例化以后传进来的，那就省去这步
@@ -56,29 +56,44 @@ class Model(object):
 
         # input of model
         # 这里的get_input, get_output函数由container的sequential提供
-        # 这里的output为了叠加性，即便是activation layer,还不是最终的概率，概率的归一化在loss函数里面进行
+        # 如果是softmax那么直接返回归一化的概率
         self.X_train = self.get_input(train=True)
         self.X_test = self.get_input(train=False)
 
         self.y_train = self.get_output(train=True)
-        self.y_test = self.get_output(train=False)
+        self.y_test = self.get_output(train=False) # 如果是CL,那么这里返回的是exp(Wx+b)
 
-        # 初始化真正的label,未来会赋值进去
+        # y=y_true 初始化真正的label,未来会赋值进去
         self.y = T.zeros_like(self.y_train)
 
-        # 计算loss，函数放在objective里面，比方说mse，categorical_crossentropy
-        train_loss = self.loss(self.y, self.y_train)
-        test_score = self.loss(self.y, self.y_test)
+
 
         if class_mode == "categorical":
             # 取每一行里面的最大值，axis=-1，因为每一行是每一个sample的不同class上的distribution
+            # 计算loss，函数放在objective里面，比方说mse，categorical_crossentropy
+            train_loss = self.loss(self.y, self.y_train)
+            test_score = self.loss(self.y, self.y_test)
 
             train_accuracy = T.mean(T.eq(T.argmax(self.y, axis=-1), T.argmax(self.y_train, axis=-1)))
             test_accuracy = T.mean(T.eq(T.argmax(self.y, axis=-1), T.argmax(self.y_test, axis=-1)))
 
         elif class_mode == "binary":
+            # 计算loss，函数放在objective里面，比方说mse，categorical_crossentropy
+            train_loss = self.loss(self.y, self.y_train)
+            test_score = self.loss(self.y, self.y_test)
+
             train_accuracy = T.mean(T.eq(self.y, T.round(self.y_train)))
             test_accuracy = T.mean(T.eq(self.y, T.round(self.y_test)))
+
+        elif class_mode == "conditional_logit":
+
+            # CL三大特点：1 loss 2 概率输出 3 accuracy:R2
+            # 这里的y不是普通的label是[0,4,8,19]这样每次比赛第一名的马
+            self.y = index
+
+            train_loss, self.y_train, train_accuracy = self.loss(self.y, self.y_train)
+            test_score, self.y_test, test_accuracy = self.loss(self.y, self.y_test)
+
         else:
             raise Exception("Invalid class mode:" + str(class_mode))
         self.class_mode = class_mode
@@ -116,11 +131,12 @@ class Model(object):
             allow_input_downcast=True, mode=theano_mode)
 
     # 这个函数是train一个minibatch
-    def train(self, X, y, accuracy=False):
+    # mode=“CL”为了不让standardize_y起作用
+    def train(self, X, y, accuracy=False, mode=None):
 
         # 强行给x上一个套[]
         X = standardize_X(X)
-        y = standardize_y(y)
+        y = standardize_y(y, mode)
         ins = X + [y]
         if accuracy:
             # *ins相当于把[]褪掉
@@ -128,10 +144,10 @@ class Model(object):
         else:
             return self._train(*ins)
         
-
-    def test(self, X, y, accuracy=False):
+    # mode=“CL”为了不让standardize_y起作用
+    def test(self, X, y, accuracy=False, mode=None):
         X = standardize_X(X)
-        y = standardize_y(y)
+        y = standardize_y(y, mode)
         ins = X + [y]
         if accuracy:
             return self._test_with_acc(*ins)
@@ -275,7 +291,7 @@ class Model(object):
             return (proba > 0.5).astype('int32')
 
 
-    def evaluate(self, X, y, batch_size=128, show_accuracy=False, verbose=1):
+    def evaluate(self, X, y, batch_size=128, show_accuracy=False, verbose=1, mode=None):
         X = standardize_X(X)
         y = standardize_y(y)
 

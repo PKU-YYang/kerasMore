@@ -16,7 +16,7 @@ import numpy as np
 
 batch_size = 64
 nb_classes = 10
-nb_epoch = 20
+nb_epoch = 5
 
 np.random.seed(1337) # for reproducibility
 
