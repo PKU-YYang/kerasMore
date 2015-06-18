@@ -1,3 +1,4 @@
+#-*- coding:utf-8 -*-
 from __future__ import absolute_import
 from __future__ import print_function
 import theano
@@ -5,17 +6,17 @@ import theano.tensor as T
 import numpy as np
 import warnings, time, copy
 
-from . import optimizers
-from . import objectives
+from . import optimizers # 为了调用optimizers.get
+from . import objectives # 为了调用objective.get
 from . import callbacks as cbks
 from .utils.generic_utils import Progbar, printv
 from .layers import containers
 from six.moves import range
 
-def standardize_y(y):
+def standardize_y(y, mode=None):
     if not hasattr(y, 'shape'):
         y = np.asarray(y)
-    if len(y.shape) == 1:
+    if (len(y.shape) == 1) & (mode!="CL"):
         y = np.reshape(y, (len(y), 1))
     return y
 
@@ -44,34 +45,60 @@ def slice_X(X, start=None, stop=None):
 
 class Model(object):
 
-    def compile(self, optimizer, loss, class_mode="categorical", theano_mode=None):
+    def compile(self, optimizer, loss, class_mode="categorical", theano_mode=None, index=None):
+
+        # 调用optimizers / objectives 里面的get函数(注意有's')
+        # 目的是把optimizer和loss函数实例化,如果在外面实例化以后传进来的，那就省去这步
+        # 只要loss和optimizer分别输入真正的实例而不是str就不会起作用，例如：loss='categorical_crossentropy', optimizer=rms
+        # loss就会调用，optimizer就不会
         self.optimizer = optimizers.get(optimizer)
         self.loss = objectives.get(loss)
 
-        # input of model 
+        # input of model
+        # 这里的get_input, get_output函数由container的sequential提供
+        # 如果是softmax那么直接返回归一化的概率
         self.X_train = self.get_input(train=True)
         self.X_test = self.get_input(train=False)
 
         self.y_train = self.get_output(train=True)
-        self.y_test = self.get_output(train=False)
+        self.y_test = self.get_output(train=False) # 如果是CL,那么这里返回的是exp(Wx+b)
 
-        # target of model
+        # y=y_true 初始化真正的label,未来会赋值进去
         self.y = T.zeros_like(self.y_train)
 
-        train_loss = self.loss(self.y, self.y_train)
-        test_score = self.loss(self.y, self.y_test)
+
 
         if class_mode == "categorical":
+            # 取每一行里面的最大值，axis=-1，因为每一行是每一个sample的不同class上的distribution
+            # 计算loss，函数放在objective里面，比方说mse，categorical_crossentropy
+            train_loss = self.loss(self.y, self.y_train)
+            test_score = self.loss(self.y, self.y_test)
+
             train_accuracy = T.mean(T.eq(T.argmax(self.y, axis=-1), T.argmax(self.y_train, axis=-1)))
             test_accuracy = T.mean(T.eq(T.argmax(self.y, axis=-1), T.argmax(self.y_test, axis=-1)))
 
         elif class_mode == "binary":
+            # 计算loss，函数放在objective里面，比方说mse，categorical_crossentropy
+            train_loss = self.loss(self.y, self.y_train)
+            test_score = self.loss(self.y, self.y_test)
+
             train_accuracy = T.mean(T.eq(self.y, T.round(self.y_train)))
             test_accuracy = T.mean(T.eq(self.y, T.round(self.y_test)))
+
+        elif class_mode == "conditional_logit":
+
+            # CL三大特点：1 loss 2 概率输出 3 accuracy:R2
+            # 这里的y不是普通的label是[0,4,8,19]这样每次比赛第一名的马
+            self.y = index
+
+            train_loss, self.y_train, train_accuracy = self.loss(self.y, self.y_train)
+            test_score, self.y_test, test_accuracy = self.loss(self.y, self.y_test)
+
         else:
             raise Exception("Invalid class mode:" + str(class_mode))
         self.class_mode = class_mode
 
+        # 注意，这里调用的不是optimiziers，是具体的optimizer里面的get_updates函数，比如sgd
         updates = self.optimizer.get_updates(self.params, self.regularizers, self.constraints, train_loss)
 
         if type(self.X_train) == list:
@@ -83,45 +110,61 @@ class Model(object):
             test_ins = [self.X_test, self.y]
             predict_ins = [self.X_test]
 
+        # 编译一个函数，返回loss,negative likelihood，并且计算基于当前train_loss需要进行的updates
         self._train = theano.function(train_ins, train_loss, 
             updates=updates, allow_input_downcast=True, mode=theano_mode)
+
+        # 编译一个函数，返回train上的loss和正确率，并且计算基于当前train_loss需要进行的updates
         self._train_with_acc = theano.function(train_ins, [train_loss, train_accuracy], 
             updates=updates, allow_input_downcast=True, mode=theano_mode)
+
+        # 编译一个函数，返回还未进行概率值归一化的值
         self._predict = theano.function(predict_ins, self.y_test, 
             allow_input_downcast=True, mode=theano_mode)
+
+        # 编译一个函数，返回test集上的loss
         self._test = theano.function(test_ins, test_score, 
             allow_input_downcast=True, mode=theano_mode)
+
+        # 编译一个函数，返回train上的loss和正确率
         self._test_with_acc = theano.function(test_ins, [test_score, test_accuracy], 
             allow_input_downcast=True, mode=theano_mode)
 
+    # 这个函数是train一个minibatch
+    # mode=“CL”为了不让standardize_y起作用
+    def train(self, X, y, accuracy=False, mode=None):
 
-    def train(self, X, y, accuracy=False):
+        # 强行给x上一个套[]
         X = standardize_X(X)
-        y = standardize_y(y)
+        y = standardize_y(y, mode)
         ins = X + [y]
         if accuracy:
+            # *ins相当于把[]褪掉
             return self._train_with_acc(*ins)
         else:
             return self._train(*ins)
         
-
-    def test(self, X, y, accuracy=False):
+    # mode=“CL”为了不让standardize_y起作用
+    def test(self, X, y, accuracy=False, mode=None):
         X = standardize_X(X)
-        y = standardize_y(y)
+        y = standardize_y(y, mode)
         ins = X + [y]
         if accuracy:
             return self._test_with_acc(*ins)
         else:
             return self._test(*ins)
 
-
+    # 这个函数是train多个epoch，每个epoch里面有多个minibatch
     def fit(self, X, y, batch_size=128, nb_epoch=100, verbose=1, callbacks=[],
             validation_split=0., validation_data=None, shuffle=True, show_accuracy=False):
-        
+
+        # 把x放到list里面去，一行是一个样本
         X = standardize_X(X)
+        # 把y one-hot encoding以后放到list里面去，一行是一个样本
         y = standardize_y(y)
 
         do_validation = False
+        # 有validation_data就直接用，没有就用split，但是这里并没有随机打散
         if validation_data:
             try:
                 X_val, y_val = validation_data
@@ -165,6 +208,8 @@ class Model(object):
 
         for epoch in range(nb_epoch):
             callbacks.on_epoch_begin(epoch)
+
+            # 这里打散输入的index
             if shuffle:
                 np.random.shuffle(index_array)
 
@@ -180,7 +225,11 @@ class Model(object):
                 callbacks.on_batch_begin(batch_index, batch_logs)
 
                 ins = X_batch + [y_batch]
+
                 if show_accuracy:
+
+                    # train的时候还是按切割好的mini-batch一个一个来
+                    # *表示把ins的在外面的list[]去除,因为X在输入的时候强行又套了一层list
                     loss, acc = self._train_with_acc(*ins)
                     batch_logs['accuracy'] = acc
                 else:
@@ -190,6 +239,7 @@ class Model(object):
                 callbacks.on_batch_end(batch_index, batch_logs)
                 
                 if batch_index == len(batches) - 1: # last batch
+                    # 每一个epoch的minibatch以后查看一下validation set上的效果
                     # validation
                     epoch_logs = {}
                     if do_validation:
@@ -241,7 +291,7 @@ class Model(object):
             return (proba > 0.5).astype('int32')
 
 
-    def evaluate(self, X, y, batch_size=128, show_accuracy=False, verbose=1):
+    def evaluate(self, X, y, batch_size=128, show_accuracy=False, verbose=1, mode=None):
         X = standardize_X(X)
         y = standardize_y(y)
 
@@ -277,7 +327,8 @@ class Model(object):
         else:
             return tot_score / seen
 
-
+# 在实际运用的时候，sequential指的是这里这个，不是container里面那个
+# 这个sequential同时继承了model 和 container里面那个sequential
 class Sequential(Model, containers.Sequential):
     '''
         Inherits from Model the following methods:

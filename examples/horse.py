@@ -6,7 +6,7 @@ from keras.models import Sequential
 from keras.layers.core import Dense, Dropout, Activation
 from keras.regularizers import l2, l1
 from keras.constraints import maxnorm
-from keras.optimizers import SGD, Adam, RMSprop
+from keras.optimizers import SGD, Adam, RMSprop, Adagrad
 from keras.utils import np_utils
 from keras.utils.generic_utils import Progbar, printv
 import numpy as np
@@ -59,17 +59,18 @@ np.random.seed(1337) # for reproducibility
 
 # 这个sequential是model里面那个，不是container里面那个
 model = Sequential()
-model.add(Dense(27, 8))
+model.add(Dense(27, 10))
 model.add(Activation('relu'))
-model.add(Dropout(0.2))
-#model.add(Dense(128, 128))
-#model.add(Activation('relu'))
-#model.add(Dropout(0.2))
-model.add(Dense(8, 1))
+model.add(Dropout(0.5))
+# model.add(Dense(128, 128))
+# model.add(Activation('relu'))
+# model.add(Dropout(0.5))
+model.add(Dense(10, 1))
+model.add(Dropout(0.3))
 model.add(Activation('exp'))
 
 
-model.compile(loss='CL_loglikehood', class_mode = "conditional_logit",optimizer=SGD(),
+model.compile(loss='CL_loglikehood', class_mode = "conditional_logit",optimizer=SGD(lr=0.005, momentum=0.95, nesterov=True),
               index=T.zeros_like(T.as_tensor_variable(train_y)))
 
 n_train_batches = (len(np.unique(train_y))-1) / batch_size
@@ -86,15 +87,17 @@ for e in range(nb_epoch):
         train_loss,train_accuracy = model.train(train_x[train_y[i]:train_y[i + batch_size]],
                                                 train_y[i:(i + batch_size + 1)] - train_y[i],
                                                 accuracy=True, mode="CL")
-        progbar.add(batch_size, values=[("train loss", train_loss),("train R2:", train_accuracy)] )
+        # 这只显示最后一个batch的情况，有差
+        #progbar.add(batch_size, values=[("train loss", train_loss),("train R2:", train_accuracy)] )
 
     #save the model of best val-accuracy
 
     val_loss,val_accuracy = model.test(valid_x, valid_y, accuracy=True, mode="CL")
-
+    trn_loss, trn_accuracy = model.test(train_x,train_y, accuracy=True, mode="CL")
+    print("R2 on train set:", trn_accuracy)
     if best_accuracy < val_accuracy:
         best_accuracy = val_accuracy
-    print("        On Validation..., best R2:", best_accuracy)
+    print(", On Validation..., best R2:", best_accuracy)
         #cPickle.dump(model,open("./model.pkl","wb"))
 
 print("best R2 on test set is:", best_accuracy)

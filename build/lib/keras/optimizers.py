@@ -1,3 +1,4 @@
+#-*- coding:utf-8 -*-
 from __future__ import absolute_import
 import theano
 import theano.tensor as T
@@ -8,6 +9,7 @@ from six.moves import zip
 
 def clip_norm(g, c, n):
     if c > 0:
+        # 验证g>=c?
         g = T.switch(T.ge(n, c), g*c/n, g)
     return g
 
@@ -19,16 +21,20 @@ class Optimizer(object):
     def get_updates(self, params, grads):
         raise NotImplementedError
 
+    # 计算gradient,如果有clipnorm就clipnorm调整下
+    # 对所有的gradient套上regulizer
     def get_gradients(self, cost, params, regularizers):
         grads = T.grad(cost, params)
 
         if hasattr(self, 'clipnorm') and self.clipnorm > 0:
+            # 计算所有grads的平方和
             norm = T.sqrt(sum([T.sum(g**2) for g in grads]))
+            # 看gradient是不是大于clipnorm,大于的话就做一些调整
             grads = [clip_norm(g, self.clipnorm, norm) for g in grads]
 
         new_grads = []
         for p, g, r in zip(params, grads, regularizers):
-            g = r(g, p)
+            g = r(g, p) # grads = regulizer(grads, params)
             new_grads.append(g)
 
         return new_grads
@@ -41,7 +47,11 @@ class SGD(Optimizer):
         self.__dict__.update(locals())
         self.iterations = shared_scalar(0)
 
+    # 具体函数的optimizer.get_updates调用的是这里的
+    # regularizer是对于整个grad的norm来说的，constraint是对于单个grad的大小来说的
     def get_updates(self, params, regularizers, constraints, cost):
+
+        # get_gradients是父类optimizer的方法,本质是T.grad(cost, params) + regulizer
         grads = self.get_gradients(cost, params, regularizers)
         lr = self.lr * (1.0 / (1.0 + self.decay * self.iterations))
         updates = [(self.iterations, self.iterations+1.)]
@@ -56,6 +66,7 @@ class SGD(Optimizer):
             else:
                 new_p = p + v
 
+            # new_p就是参数接下来params的update
             updates.append((p, c(new_p))) # apply constraints
         return updates
 
@@ -178,6 +189,8 @@ adagrad = Adagrad
 adadelta = Adadelta
 adam = Adam
 
+# get_from_module是个内部函数，用来把str调用成真正的函数
+# 在第二个参数里找第一个函数,如果没有就初始化
 from .utils.generic_utils import get_from_module
 def get(identifier):
     return get_from_module(identifier, globals(), 'optimizer', instantiate=True)

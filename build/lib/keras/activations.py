@@ -3,6 +3,10 @@ import theano
 import theano.tensor as T
 import types
 
+
+def exp(x):
+    return T.exp(x)
+
 def softmax(x):
     return T.nnet.softmax(x)
 

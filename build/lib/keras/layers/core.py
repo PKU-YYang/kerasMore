@@ -116,7 +116,7 @@ class Merge(object):
                 res.append(o)
         return res
 
-    @property
+    @property # 只读
     def input(self):
         return self.get_input()
 

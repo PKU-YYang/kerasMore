@@ -120,7 +120,7 @@ class SimpleDeepRNN(Layer):
         return self.activation(o)
 
     def get_output(self, train):
-        X = self.get_input(train)
+        X = self.get_input(train) #
         X = X.dimshuffle((1,0,2)) 
 
         x = T.dot(X, self.W) + self.b
@@ -323,9 +323,9 @@ class LSTM(Layer):
             self.set_weights(weights)
 
     def _step(self, 
-        xi_t, xf_t, xo_t, xc_t, 
-        h_tm1, c_tm1, 
-        u_i, u_f, u_o, u_c): 
+        xi_t, xf_t, xo_t, xc_t, # sequences，loop over的对象
+        h_tm1, c_tm1, # outputs_info, 上一次fn返回的值会作为下一次的输入嵌套使用，ht ct会替代htm1, ctm1,从而起到对时间的recurrent的功能,做recureent的时候其实每一步timestep都有一个输出，就看最后是想保留最后一步的输出还是之前每步的都要
+        u_i, u_f, u_o, u_c):  # non_sequences
         i_t = self.inner_activation(xi_t + T.dot(h_tm1, u_i))
         f_t = self.inner_activation(xf_t + T.dot(h_tm1, u_f))
         c_t = f_t * c_tm1 + i_t * self.activation(xc_t + T.dot(h_tm1, u_c))
@@ -334,17 +334,18 @@ class LSTM(Layer):
         return h_t, c_t
 
     def get_output(self, train):
-        X = self.get_input(train) 
-        X = X.dimshuffle((1,0,2))
+        X = self.get_input(train) # max_length_pad
+        X = X.dimshuffle((1,0,2)) # max_length, nb_samples, input_dim
 
-        xi = T.dot(X, self.W_i) + self.b_i
+        xi = T.dot(X, self.W_i) + self.b_i # [max_length, nb_samples, output_dim]
         xf = T.dot(X, self.W_f) + self.b_f
         xc = T.dot(X, self.W_c) + self.b_c
         xo = T.dot(X, self.W_o) + self.b_o
-        
+
+        # 这是lstm的核心，对于每个样本step的求和，输出[max_length, nb_samples, output_dim]大小的h_t
         [outputs, memories], updates = theano.scan(
             self._step, 
-            sequences=[xi, xf, xo, xc],
+            sequences=[xi, xf, xo, xc], # 在这些输入的length上循环累加，迭代完max_length
             outputs_info=[
                 T.unbroadcast(alloc_zeros_matrix(X.shape[1], self.output_dim), 1),
                 T.unbroadcast(alloc_zeros_matrix(X.shape[1], self.output_dim), 1)
@@ -352,9 +353,9 @@ class LSTM(Layer):
             non_sequences=[self.U_i, self.U_f, self.U_o, self.U_c], 
             truncate_gradient=self.truncate_gradient 
         )
-        if self.return_sequences:
+        if self.return_sequences: # outputs的大小是[max_length, nb_samples, output_dim]
             return outputs.dimshuffle((1,0,2))
-        return outputs[-1]
+        return outputs[-1] # [-1]使得降调一维，max_length那一维没有了,[nb_samples,output_Dim]
 
     def get_config(self):
         return {"name":self.__class__.__name__,
