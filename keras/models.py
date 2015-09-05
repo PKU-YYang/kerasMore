@@ -87,11 +87,13 @@ class Model(object):
 
         elif class_mode == "conditional_logit":
 
-            # CL三大特点：1 loss 2 概率输出 3 accuracy:R2
-            # 这里的y不是普通的label是[0,4,8,19]这样每次比赛第一名的马
+            # CL三大特点：1 loss 2 概率输出 3 R2
+            # 这里的y不是普通的label，而是[0,4,8,19]这样每次比赛第一名的马
+            # 所以需要用外面传进来一个Index，就是因为这里的y并不是每个样本一个，是特殊的序列形式，只有在外面才知道它的形状
+            # index仅仅对CL model有效
             self.y = index
 
-            train_loss, self.y_train, train_accuracy = self.loss(self.y, self.y_train)
+            train_loss, self.y_train, train_accuracy = self.loss(self.y, self.y_train) # loss在obejective里面
             test_score, self.y_test, test_accuracy = self.loss(self.y, self.y_test)
 
         else:
@@ -155,6 +157,7 @@ class Model(object):
             return self._test(*ins)
 
     # 这个函数是train多个epoch，每个epoch里面有多个minibatch
+    # fit中validation的准确率是有偏差的，因为用的是Evaluate,它是按batchsize来计算的
     def fit(self, X, y, batch_size=128, nb_epoch=100, verbose=1, callbacks=[],
             validation_split=0., validation_data=None, shuffle=True, show_accuracy=False):
 
@@ -243,7 +246,7 @@ class Model(object):
                     # validation
                     epoch_logs = {}
                     if do_validation:
-                        if show_accuracy:
+                        if show_accuracy: # evaluate有偏差的
                             val_loss, val_acc = self.evaluate(X_val, y_val, batch_size=batch_size, \
                                 verbose=0, show_accuracy=True)
                             epoch_logs['val_accuracy'] = val_acc
@@ -322,6 +325,7 @@ class Model(object):
             if verbose:
                 progbar.update(batch_end, log_values)
 
+        # evaluate中的准确率是按看到多少个batch算的，如果样本数不是batch_size的整数倍就会有偏差
         if show_accuracy:
             return tot_score / seen, tot_acc / seen
         else:

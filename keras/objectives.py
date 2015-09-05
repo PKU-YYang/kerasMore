@@ -81,6 +81,7 @@ def CL_loglikehood(y_true, y_pred):# 这里的y_pred不像softmax直接返回概
 
     r_square = 1 - r_error
 
+    # log-like, 每匹马的获胜概率，R2
     return T.mean(mean_neg_loglikelihood.ravel(), dtype='float32'), y_pred, T.mean(r_square.ravel(), dtype='float32')
 
 

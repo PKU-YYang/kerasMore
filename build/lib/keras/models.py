@@ -87,8 +87,10 @@ class Model(object):
 
         elif class_mode == "conditional_logit":
 
-            # CL三大特点：1 loss 2 概率输出 3 accuracy:R2
-            # 这里的y不是普通的label是[0,4,8,19]这样每次比赛第一名的马
+            # CL三大特点：1 loss 2 概率输出 3 R2
+            # 这里的y不是普通的label，而是[0,4,8,19]这样每次比赛第一名的马
+            # 所以需要用外面传进来一个Index，就是因为这里的y并不是每个样本一个，是特殊的序列形式，只有在外面才知道它的形状
+            # index仅仅对CL model有效
             self.y = index
 
             train_loss, self.y_train, train_accuracy = self.loss(self.y, self.y_train)

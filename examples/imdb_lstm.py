@@ -11,7 +11,7 @@ from keras.layers.core import Dense, Dropout, Activation
 from keras.layers.embeddings import Embedding
 from keras.layers.recurrent import LSTM, GRU
 from keras.datasets import imdb
-
+from keras.utils import np_utils
 '''
     Train a LSTM on the IMDB sentiment classification task.
 
@@ -49,25 +49,30 @@ X_test = sequence.pad_sequences(X_test, maxlen=maxlen)
 print('X_train shape:', X_train.shape)
 print('X_test shape:', X_test.shape)
 
+# 如果是binary的label想用categorical的mode必须做一步转换
+Y_train = np_utils.to_categorical(y_train, 2)
+Y_test = np_utils.to_categorical(y_test, 2)
+
+
 print('Build model...')
 model = Sequential()
 model.add(Embedding(max_features, 256)) # embedding: 从 [nb_samples, maxlen] 到 [nb_samples, maxlen, max_features]
-model.add(LSTM(256, 128)) # 此时time_step已经被卷到output_dim里面去了[nb_samples, output_dim]
-model.add(Dropout(0.5))
-#model.add(LSTM(128, 32)) # 此时time_step已经被卷到output_dim里面去了[nb_samples, output_dim]
+#model.add(LSTM(256, 128, return_sequences=True)) # 此时time_step已经被卷到output_dim里面去了[nb_samples, output_dim]
 #model.add(Dropout(0.5))
-model.add(Dense(32, 1))
-model.add(Activation('sigmoid'))
+model.add(LSTM(256, 32)) # 此时time_step已经被卷到output_dim里面去了[nb_samples, output_dim]
+model.add(Dropout(0.5))
+model.add(Dense(32, 2))
+model.add(Activation('softmax'))
 
 # try using different optimizers and different optimizer configs
-model.compile(loss='binary_crossentropy', optimizer=Adagrad(lr=0.01, epsilon=1e-6), class_mode="binary")
+model.compile(loss='categorical_crossentropy', optimizer=Adagrad(lr=0.01, epsilon=1e-6), class_mode="categorical")
 
 print("Train...")
-model.fit(X_train, y_train, batch_size=batch_size, nb_epoch=100, validation_split=0.25, show_accuracy=True)
-score = model.evaluate(X_test, y_test, batch_size=batch_size)
+model.fit(X_train, Y_train, batch_size=batch_size, nb_epoch=100, validation_split=0.25, show_accuracy=True)
+score = model.evaluate(X_test, Y_test, batch_size=batch_size)
 print('Test score:', score)
 
 classes = model.predict_classes(X_test, batch_size=batch_size)
-acc = np_utils.accuracy(classes, y_test)
+acc = np_utils.accuracy(classes, Y_test)
 print('Test accuracy:', acc)
 
